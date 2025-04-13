@@ -8,7 +8,6 @@ from matplotlib import gridspec
 from scipy.spatial.distance import cdist
 import pandas as pd
 
-
 # Loading the trajectory from a csv:
 
 def load_trajectory_from_csv(csv_path, num_points_between=10):
@@ -37,18 +36,14 @@ def load_trajectory_from_csv(csv_path, num_points_between=10):
     waypoints = list(zip(df[x_col], df[y_col]))
     
     # Generate the trajectory using the existing custom function
-    trajectory = TrajectoryGenerator.custom(waypoints, "trajectory.csv",num_points_between)
+    trajectory = TrajectoryGenerator.custom(waypoints, csv_path, num_points_between)
     
     return trajectory
 
 
-
-
-
-
 class DifferentialDriveRobot:
     """Differential drive robot model."""
-    def __init__(self, x=0, y=0, theta=0, wheel_radius=0.05, wheel_base=0.2, color='blue'):
+    def __init__(self, x=0, y=0, theta=0, wheel_radius=0.05, wheel_base=0.2, color='blue'): # Everything is in meters
         # Robot state [x, y, theta]
         self.state = np.array([x, y, theta])
         
@@ -57,8 +52,8 @@ class DifferentialDriveRobot:
         self.wheel_base = wheel_base      # distance between wheels in meters
         
         # Robot dimensions for visualization
-        self.length = 0.3
-        self.width = 0.2
+        self.length = 0.3 # 0.3 Meters
+        self.width = 0.2 # 0.2 Meters
         
         # Robot color for visualization
         self.color = color
@@ -90,6 +85,7 @@ class DifferentialDriveRobot:
         vl = (2*v - omega*self.wheel_base) / (2*self.wheel_radius)  # left wheel
         return vl, vr
 
+# Generates Basic Trajectories such as circle, square and also a Custom Trajectory from the check points.
 class TrajectoryGenerator:
     """Generates various trajectories for testing."""
     @staticmethod
@@ -156,8 +152,8 @@ class TrajectoryGenerator:
         Returns:
             List of (x,y) tuples representing the trajectory
         """
-        # If CSV path is provided, load waypoints from the file
-        if csv_path is not None:
+        # If CSV path is provided and points not provided, load waypoints from the file
+        if points is None and csv_path is not None:
             # Read the CSV file
             df = pd.read_csv(csv_path)
             
@@ -196,175 +192,7 @@ class TrajectoryGenerator:
         print(f'Generated trajectory with {len(trajectory)} points')
         return trajectory
 
-# 
-def pid_controller(robot_state, target_point, dt):
-    """
-    PID controller for adaptive path following.
-    
-    Args:
-        robot_state: [x, y, theta] state of the robot
-        target_point: (x, y) target position on the path ahead
-        dt: time step in seconds
-        
-    Returns:
-        v: linear velocity
-        omega: angular velocity
-    """
-    # Static variables to store previous errors and integrals
-    if not hasattr(pid_controller, "prev_dist_error"):
-        pid_controller.prev_dist_error = 0.0
-        pid_controller.prev_angle_error = 0.0
-        pid_controller.dist_error_sum = 0.0
-        pid_controller.angle_error_sum = 0.0
-    
-    x, y, theta = robot_state
-    x_target, y_target = target_point
-    
-    # Calculate the distance to target
-    dist_to_target = np.sqrt((x_target - x)**2 + (y_target - y)**2)
-    
-    # Calculate the angle to the target
-    angle_to_target = np.arctan2(y_target - y, x_target - x)
-    
-    # Calculate the angle error (normalized between -pi and pi)
-    angle_error = np.arctan2(np.sin(angle_to_target - theta), np.cos(angle_to_target - theta))
-    
-    # Calculate error derivatives
-    dist_error_deriv = (dist_to_target - pid_controller.prev_dist_error) / dt
-    angle_error_deriv = (angle_error - pid_controller.prev_angle_error) / dt
-    
-    # Update error integrals (with anti-windup)
-    pid_controller.dist_error_sum += dist_to_target * dt
-    pid_controller.dist_error_sum = np.clip(pid_controller.dist_error_sum, -1.0, 1.0)  # Anti-windup
-    
-    pid_controller.angle_error_sum += angle_error * dt
-    pid_controller.angle_error_sum = np.clip(pid_controller.angle_error_sum, -1.0, 1.0)  # Anti-windup
-    
-    # Store current errors for next iteration
-    pid_controller.prev_dist_error = dist_to_target
-    pid_controller.prev_angle_error = angle_error
-    
-    # PID gains for linear velocity
-    kp_v = 2.0   # Proportional gain
-    ki_v = 1  # Integral gain
-    kd_v = 0.6   # Derivative gain
-    
-    # PID gains for angular velocity
-    kp_omega = 2.0   # Proportional gain
-    ki_omega = 1   # Integral gain
-    kd_omega = 0.6   # Derivative gain
-    
-    # Calculate linear velocity using PID
-    v = (kp_v * dist_to_target + 
-         ki_v * pid_controller.dist_error_sum + 
-         kd_v * dist_error_deriv)
-    
-    # Calculate angular velocity using PID
-    omega = (kp_omega * angle_error + 
-             ki_omega * pid_controller.angle_error_sum + 
-             kd_omega * angle_error_deriv)
-    
-    # Apply limits
-    v = max(0.2, min(v, 5.0))  # Clamp between 0.2 and 5.0
-    omega = np.clip(omega, -np.pi, np.pi)  # Limit angular velocity
-    
-    return v, omega
-
-def mpc_controller(robot_state, target_point, dt):
-    """
-    Simple MPC controller for path following.
-    
-    Args:
-        robot_state: [x, y, theta] state of the robot
-        target_point: (x, y) target position on the path ahead
-        dt: time step in seconds
-        
-    Returns:
-        v: linear velocity
-        omega: angular velocity
-    """
-    # MPC parameters
-    N = 10  # Prediction horizon
-    
-    # Initialize storage for MPC if not already done
-    if not hasattr(mpc_controller, "initialized"):
-        mpc_controller.initialized = True
-        mpc_controller.last_v = 0.0
-        mpc_controller.last_omega = 0.0
-    
-    # Current state
-    x, y, theta = robot_state
-    x_target, y_target = target_point
-    
-    # Cost function weights
-    w_pos = 1.0      # Position error weight
-    w_theta = 0.8    # Heading error weight
-    w_v = 0.1        # Velocity smoothness weight
-    w_omega = 0.2    # Angular velocity smoothness weight
-    
-    # Control constraints
-    v_min, v_max = 0.0, 5.0
-    omega_min, omega_max = -np.pi, np.pi
-    
-    # Simple MPC approach: evaluate multiple control sequences and pick the best
-    best_cost = float('inf')
-    best_v = mpc_controller.last_v
-    best_omega = mpc_controller.last_omega
-    
-    # Discretized control space to search
-    v_options = np.linspace(max(v_min, mpc_controller.last_v - 0.5), 
-                           min(v_max, mpc_controller.last_v + 0.5), 5)
-    omega_options = np.linspace(max(omega_min, mpc_controller.last_omega - 0.5), 
-                               min(omega_max, mpc_controller.last_omega + 0.5), 7)
-    
-    # Evaluate each control sequence
-    for v in v_options:
-        for omega in omega_options:
-            # Predict future states using simplified model
-            pred_x, pred_y, pred_theta = x, y, theta
-            total_cost = 0
-            
-            for i in range(N):
-                # Simulate the robot model forward
-                pred_x += v * np.cos(pred_theta) * dt
-                pred_y += v * np.sin(pred_theta) * dt
-                pred_theta += omega * dt
-                
-                # Position error to target
-                pos_error = np.sqrt((x_target - pred_x)**2 + (y_target - pred_y)**2)
-                
-                # Heading error to target
-                desired_theta = np.arctan2(y_target - pred_y, x_target - pred_x)
-                theta_error = np.arctan2(np.sin(desired_theta - pred_theta), 
-                                        np.cos(desired_theta - pred_theta))
-                
-                # Control smoothness cost
-                v_change = abs(v - mpc_controller.last_v)
-                omega_change = abs(omega - mpc_controller.last_omega)
-                
-                # Weighted cost for this step
-                step_cost = (w_pos * pos_error + 
-                            w_theta * abs(theta_error) + 
-                            w_v * v_change + 
-                            w_omega * omega_change)
-                
-                # Discount future costs
-                discount = 0.9 ** i
-                total_cost += discount * step_cost
-            
-            # If this control sequence has lower cost, select it
-            if total_cost < best_cost:
-                best_cost = total_cost
-                best_v = v
-                best_omega = omega
-    
-    # Save the chosen controls for next iteration
-    mpc_controller.last_v = best_v
-    mpc_controller.last_omega = best_omega
-    
-    return best_v, best_omega
-
-# Create independent instances of controllers to avoid shared state
+# Controllers from the original file
 class PIDController:
     def __init__(self):
         self.prev_dist_error = 0.0
@@ -373,14 +201,14 @@ class PIDController:
         self.angle_error_sum = 0.0
         
     def control(self, robot_state, target_point, dt):
-        x, y, theta = robot_state
-        x_target, y_target = target_point
+        x, y, theta = robot_state # Has the current position of the robot and the heading
+        x_target, y_target = target_point # This is the a (x,y) point on the trajectory that is looking ahead and changes continunously
         
         # Calculate the distance to target
-        dist_to_target = np.sqrt((x_target - x)**2 + (y_target - y)**2)
+        dist_to_target = np.sqrt((x_target - x)**2 + (y_target - y)**2) # I am computing my distance to the target point from the current state
         
         # Calculate the angle to the target
-        angle_to_target = np.arctan2(y_target - y, x_target - x)
+        angle_to_target = np.arctan2(y_target - y, x_target - x) # Computing the heading
         
         # Calculate the angle error (normalized between -pi and pi)
         angle_error = np.arctan2(np.sin(angle_to_target - theta), np.cos(angle_to_target - theta))
@@ -442,11 +270,11 @@ class MPCController:
         # Cost function weights
         w_pos = 1.0      # Position error weight
         w_theta = 1.5    # Heading error weight
-        w_v = 0.01        # Velocity smoothness weight
-        w_omega = 0.1    # Angular velocity smoothness weight
+        w_v = 0.1        # Velocity smoothness weight
+        w_omega = 0.2    # Angular velocity smoothness weight
         
         # Control constraints
-        v_min, v_max = 0.5, 5.0
+        v_min, v_max = 0.2, 5.0
         omega_min, omega_max = -np.pi, np.pi
         
         # Simple MPC approach: evaluate multiple control sequences and pick the best
@@ -507,6 +335,206 @@ class MPCController:
         
         return best_v, best_omega
 
+# ADDITIONAL CONTROLLERS
+
+class PDController:
+    """Proportional-Derivative controller for trajectory tracking."""
+    def __init__(self):
+        self.prev_angle_error = 0.0
+        
+    def control(self, robot_state, target_point, dt):
+        x, y, theta = robot_state
+        x_target, y_target = target_point
+        
+        # Calculate the distance to target
+        dist_to_target = np.sqrt((x_target - x)**2 + (y_target - y)**2)
+        
+        # Calculate the angle to the target
+        angle_to_target = np.arctan2(y_target - y, x_target - x)
+        
+        # Calculate the angle error (normalized between -pi and pi)
+        angle_error = np.arctan2(np.sin(angle_to_target - theta), np.cos(angle_to_target - theta))
+        
+        # Calculate error derivative for the angle
+        angle_error_deriv = (angle_error - self.prev_angle_error) / dt
+        
+        # Store current error for next iteration
+        self.prev_angle_error = angle_error
+        
+        # PD gains
+        kp_v = 1.5    # Proportional gain for velocity
+        kp_omega = 2.0  # Proportional gain for angular velocity
+        kd_omega = 1.0  # Derivative gain for angular velocity
+        
+        # Calculate linear velocity - proportional to distance
+        v = kp_v * dist_to_target
+        v = max(0.2, min(v, 5.0))  # Clamp between 0.2 and 5.0
+        
+        # Calculate angular velocity - PD control on the heading error
+        omega = kp_omega * angle_error + kd_omega * angle_error_deriv
+        omega = np.clip(omega, -np.pi, np.pi)  # Limit angular velocity
+        
+        return v, omega
+
+class LQRController:
+    """Linear Quadratic Regulator controller for trajectory tracking."""
+    def __init__(self):
+        # LQR gain matrices
+        self.K = np.array([
+            [1.5, 0.0, 0.0],  # Gain for x position error
+            [0.0, 1.5, 2.0]   # Gain for y position and heading errors
+        ])
+        
+    def control(self, robot_state, target_point, dt):
+        x, y, theta = robot_state
+        x_target, y_target = target_point
+        
+        # Calculate error in robot frame
+        error_global = np.array([
+            x_target - x,
+            y_target - y
+        ])
+        
+        # Rotate error to robot frame
+        c, s = np.cos(theta), np.sin(theta)
+        R = np.array([
+            [c, s],
+            [-s, c]
+        ])
+        error_robot = R @ error_global
+        
+        # Create error state vector [x_error, y_error, theta_error]
+        # For theta error, use the angle to the target
+        angle_to_target = np.arctan2(error_global[1], error_global[0])
+        theta_error = np.arctan2(np.sin(angle_to_target - theta), np.cos(angle_to_target - theta))
+        error_state = np.array([error_robot[0], error_robot[1], theta_error])
+        
+        # Calculate control inputs using LQR gains
+        v_r = self.K[0] @ error_state  # Right wheel velocity
+        v_l = self.K[1] @ error_state  # Left wheel velocity
+        
+        # Convert wheel velocities to v and omega
+        v = (v_r + v_l) / 2
+        omega = (v_r - v_l) / 0.2  # 0.2 is the wheel base
+        
+        # Apply limits
+        v = max(0.2, min(v, 5.0))
+        omega = np.clip(omega, -np.pi, np.pi)
+        
+        return v, omega
+
+class OpenLoopController:
+    """Open loop controller that ignores target point and just drives forward."""
+    def __init__(self):
+        self.v = 1.0  # Constant forward velocity
+        self.omega = 0.0  # Initial angular velocity
+        self.t = 0.0  # Time tracking
+        
+    def control(self, robot_state, target_point, dt):
+        # Increment time
+        self.t += dt
+        
+        # Periodically change direction to create an interesting path
+        if int(self.t / 3) % 2 == 0:
+            self.omega = 0.3
+        else:
+            self.omega = -0.3
+            
+        return self.v, self.omega
+
+class FastMPCController:
+    """MPC controller optimized for speed."""
+    def __init__(self):
+        self.last_v = 0.0
+        self.last_omega = 0.0
+        
+    def control(self, robot_state, target_point, dt):
+        # MPC parameters
+        N = 10  # Prediction horizon
+        
+        # Current state
+        x, y, theta = robot_state
+        x_target, y_target = target_point
+        
+        # Cost function weights with priority on speed
+        w_pos = 0.8      # Position error weight (lower to prioritize speed)
+        w_theta = 0.7    # Heading error weight (lower to prioritize speed)
+        w_v = 0.05       # Velocity smoothness weight (lower to allow faster acceleration)
+        w_omega = 0.2    # Angular velocity smoothness weight
+        
+        # Control constraints with higher minimum velocity
+        v_min, v_max = 0.5, 5.0  # Minimum velocity of 0.5 instead of 0
+        omega_min, omega_max = -np.pi, np.pi
+        
+        # Velocity bias to encourage higher speeds
+        velocity_bias = 0.3
+        
+        # Simple MPC approach: evaluate multiple control sequences and pick the best
+        best_cost = float('inf')
+        best_v = self.last_v
+        best_omega = self.last_omega
+        
+        # Discretized control space to search with bias toward acceleration
+        v_range_min = max(v_min, self.last_v - 0.3)  # Less deceleration
+        v_range_max = min(v_max, self.last_v + 0.7)  # More acceleration
+        v_options = np.linspace(v_range_min, v_range_max, 5)
+        
+        omega_options = np.linspace(max(omega_min, self.last_omega - 0.5), 
+                                   min(omega_max, self.last_omega + 0.5), 7)
+        
+        # Evaluate each control sequence
+        for v in v_options:
+            for omega in omega_options:
+                # Predict future states using simplified model
+                pred_x, pred_y, pred_theta = x, y, theta
+                total_cost = 0
+                
+                for i in range(N):
+                    # Simulate the robot model forward
+                    pred_x += v * np.cos(pred_theta) * dt
+                    pred_y += v * np.sin(pred_theta) * dt
+                    pred_theta += omega * dt
+                    
+                    # Position error to target
+                    pos_error = np.sqrt((x_target - pred_x)**2 + (y_target - pred_y)**2)
+                    
+                    # Heading error to target
+                    desired_theta = np.arctan2(y_target - pred_y, x_target - pred_x)
+                    theta_error = np.arctan2(np.sin(desired_theta - pred_theta), 
+                                            np.cos(desired_theta - pred_theta))
+                    
+                    # Control smoothness cost
+                    v_change = abs(v - self.last_v)
+                    omega_change = abs(omega - self.last_omega)
+                    
+                    # Add velocity reward (negative cost for higher velocities)
+                    velocity_reward = -velocity_bias * v / v_max
+                    
+                    # Weighted cost for this step
+                    step_cost = (w_pos * pos_error + 
+                                w_theta * abs(theta_error) + 
+                                w_v * v_change + 
+                                w_omega * omega_change +
+                                velocity_reward)  # Adding velocity reward term
+                    
+                    # Discount future costs
+                    discount = 0.9 ** i
+                    total_cost += discount * step_cost
+                
+                # If this control sequence has lower cost, select it
+                if total_cost < best_cost:
+                    best_cost = total_cost
+                    best_v = v
+                    best_omega = omega
+        
+        # Save the chosen controls for next iteration
+        self.last_v = best_v
+        self.last_omega = best_omega
+        
+        return best_v, best_omega
+
+# MULTI-ROBOT SIMULATOR WITH UPDATED CONTROLLERS
+
 class MultiRobotSimulator:
     """Simulator for multiple differential drive robots with different controllers."""
     def __init__(self, dt=0.05, lookahead_distance=0.5):
@@ -515,86 +543,115 @@ class MultiRobotSimulator:
         self.t = 0    # current time
         self.lookahead_distance = lookahead_distance  # lookahead distance for path following
         
+        # Define robot colors 
+        colors = ['blue', 'red', 'green', 'orange', 'purple', 'brown']
+        
         # Initialize robots with different controllers
+        self.robots = []
+        self.controllers = []
+        self.controller_names = []
+        
         # Robot 1 - PID controller (blue)
-        self.robot1 = DifferentialDriveRobot(x=0, y=0, theta=0, color='blue')
-        self.controller1 = PIDController()
+        self.robots.append(DifferentialDriveRobot(x=0, y=0, theta=0, color=colors[0]))
+        self.controllers.append(PIDController())
+        self.controller_names.append("PID")
         
         # Robot 2 - MPC controller (red)
-        self.robot2 = DifferentialDriveRobot(x=0, y=0, theta=0, color='red')
-        self.controller2 = MPCController()
+        self.robots.append(DifferentialDriveRobot(x=0, y=0, theta=0, color=colors[1]))
+        self.controllers.append(MPCController())
+        self.controller_names.append("MPC")
+        
+        # Robot 3 - PD controller (green)
+        self.robots.append(DifferentialDriveRobot(x=0, y=0, theta=0, color=colors[2]))
+        self.controllers.append(PDController())
+        self.controller_names.append("PD")
+        
+        # Robot 4 - LQR controller (orange)
+        self.robots.append(DifferentialDriveRobot(x=0, y=0, theta=0, color=colors[3]))
+        self.controllers.append(LQRController())
+        self.controller_names.append("LQR")
+        
+        # Robot 5 - Fast MPC controller (purple)
+        self.robots.append(DifferentialDriveRobot(x=0, y=0, theta=0, color=colors[4]))
+        self.controllers.append(FastMPCController())
+        self.controller_names.append("Fast MPC")
+        
+        # Robot 6 - Open Loop controller (brown)
+        self.robots.append(DifferentialDriveRobot(x=0, y=0, theta=0, color=colors[5]))
+        self.controllers.append(OpenLoopController())
+        self.controller_names.append("Open Loop")
+        
+        # Number of robots
+        self.num_robots = len(self.robots)
         
         # Trajectory parameters and data
         self.trajectory_type = "custom"
-        self.trajectory = TrajectoryGenerator.circle()
+        self.trajectory = TrajectoryGenerator.custom(csv_path="trajectory.csv")
         self.trajectory_array = np.array(self.trajectory)  # For efficient distance calculations
         
-        # Robot 1 tracking data
-        self.closest_point_idx1 = 0
-        self.target_point_idx1 = 0
-        self.tracking_errors1 = []
-        self.control_inputs1 = []
-        self.robot_path1 = []
-        
-        # Robot 2 tracking data
-        self.closest_point_idx2 = 0
-        self.target_point_idx2 = 0
-        self.tracking_errors2 = []
-        self.control_inputs2 = []
-        self.robot_path2 = []
+        # Robot tracking data
+        self.closest_point_idx = [0] * self.num_robots
+        self.target_point_idx = [0] * self.num_robots
+        self.tracking_errors = [[] for _ in range(self.num_robots)]
+        self.control_inputs = [[] for _ in range(self.num_robots)]
+        self.robot_paths = [[] for _ in range(self.num_robots)]
+        self.projected_points = [None] * self.num_robots
         
         # Common data
         self.timestamps = []
+        
+        # Visualization elements
+        self.robot_bodies = []
+        self.directions = []
+        self.path_lines = []
+        self.closest_point_circles = []
+        self.target_point_circles = []
+        self.cross_track_lines = []
+        self.error_lines = []
+        self.v_lines = []
+        self.omega_lines = []
         
         # Setup visualization
         self.setup_visualization()
         
     def reset(self):
-        """Reset the simulation."""
+
         # Reset robots
-        self.robot1 = DifferentialDriveRobot(x=0, y=0, theta=0, color='blue')
-        self.robot2 = DifferentialDriveRobot(x=0, y=0, theta=0, color='red')
+        colors = [r.color for r in self.robots]  # Save colors
+        self.robots = []
+        for i in range(self.num_robots):
+            self.robots.append(DifferentialDriveRobot(x=0, y=0, theta=0, color=colors[i]))
         
         # Reset controllers
-        self.controller1 = PIDController()
-        self.controller2 = MPCController()
+        controller_classes = [c.__class__ for c in self.controllers]
+        self.controllers = []
+        for controller_class in controller_classes:
+            self.controllers.append(controller_class())
         
         # Reset time and indices
         self.t = 0
-        self.closest_point_idx1 = 0
-        self.target_point_idx1 = 0
-        self.closest_point_idx2 = 0
-        self.target_point_idx2 = 0
+        self.closest_point_idx = [0] * self.num_robots
+        self.target_point_idx = [0] * self.num_robots
         
         # Reset metrics
-        self.tracking_errors1 = []
-        self.control_inputs1 = []
-        self.robot_path1 = []
-        self.tracking_errors2 = []
-        self.control_inputs2 = []
-        self.robot_path2 = []
+        self.tracking_errors = [[] for _ in range(self.num_robots)]
+        self.control_inputs = [[] for _ in range(self.num_robots)]
+        self.robot_paths = [[] for _ in range(self.num_robots)]
+        self.projected_points = [None] * self.num_robots
         self.timestamps = []
         
         # Reset plots
-        self.path_line1.set_data([], [])
-        self.path_line2.set_data([], [])
-        self.error_line1.set_data([], [])
-        self.error_line2.set_data([], [])
-        self.v_line1.set_data([], [])
-        self.v_line2.set_data([], [])
-        self.omega_line1.set_data([], [])
-        self.omega_line2.set_data([], [])
-        
-        # Reset target visualization
-        if self.trajectory:
-            self.closest_point_circle1.center = self.trajectory[0]
-            self.target_point_circle1.center = self.trajectory[0]
-            self.closest_point_circle2.center = self.trajectory[0]
-            self.target_point_circle2.center = self.trajectory[0]
-            if hasattr(self, 'cross_track_line1'):
-                self.cross_track_line1.set_data([], [])
-            if hasattr(self, 'cross_track_line2'):
-                self.cross_track_line2.set_data([], [])
+        for i in range(self.num_robots):
+            self.path_lines[i].set_data([], [])
+            self.error_lines[i].set_data([], [])
+            self.v_lines[i].set_data([], [])
+            self.omega_lines[i].set_data([], [])
+            self.cross_track_lines[i].set_data([], [])
+            
+            # Reset target visualization
+            if self.trajectory:
+                self.closest_point_circles[i].center = self.trajectory[0]
+                self.target_point_circles[i].center = self.trajectory[0]
         
         # Restart animation if stopped
         try:
@@ -609,7 +666,7 @@ class MultiRobotSimulator:
                     blit=False
                 )
                 self.anim_running = True
-    
+
     def set_trajectory(self, trajectory_type):
         """Set the trajectory type and generate the trajectory."""
         self.trajectory_type = trajectory_type
@@ -621,9 +678,8 @@ class MultiRobotSimulator:
         elif trajectory_type == "square":
             self.trajectory = TrajectoryGenerator.square()
         elif trajectory_type == "custom":
-            # Default custom path
-            custom_points = [(0, 0), (3, 0), (3, 3), (0, 3), (0, 0)]
-            self.trajectory = TrajectoryGenerator.custom(custom_points)
+            # Default custom path from CSV
+            self.trajectory = TrajectoryGenerator.custom(csv_path="trajectory.csv")
         
         # Update trajectory array for distance calculations
         self.trajectory_array = np.array(self.trajectory)
@@ -632,12 +688,30 @@ class MultiRobotSimulator:
         traj_x = [point[0] for point in self.trajectory]
         traj_y = [point[1] for point in self.trajectory]
         self.traj_line.set_data(traj_x, traj_y)
-        self.ax_sim.relim()
-        self.ax_sim.autoscale_view()
+        
+        # Auto-adjust the view to fit the trajectory with some margin
+        margin = 1.0  # Add 1 meter margin around trajectory
+        x_min, x_max = min(traj_x) - margin, max(traj_x) + margin
+        y_min, y_max = min(traj_y) - margin, max(traj_y) + margin
+        
+        # Keep aspect ratio square
+        x_range = x_max - x_min
+        y_range = y_max - y_min
+        if x_range > y_range:
+            y_center = (y_min + y_max) / 2
+            y_min = y_center - x_range / 2
+            y_max = y_center + x_range / 2
+        else:
+            x_center = (x_min + x_max) / 2
+            x_min = x_center - y_range / 2
+            x_max = x_center + y_range / 2
+            
+        self.ax_sim.set_xlim(x_min, x_max)
+        self.ax_sim.set_ylim(y_min, y_max)
         
         # Reset simulation
         self.reset()
-    
+
     def find_closest_point(self, robot_state):
         """Find the closest point on the trajectory to the current robot position."""
         if not self.trajectory:
@@ -653,7 +727,7 @@ class MultiRobotSimulator:
         closest_idx = np.argmin(distances)
         
         return closest_idx
-    
+
     def find_target_point(self, closest_idx):
         """Find a target point on the trajectory ahead of the closest point."""
         if not self.trajectory:
@@ -673,14 +747,11 @@ class MultiRobotSimulator:
             target_idx += 1
         
         return target_idx
-    
-    def calculate_cross_track_error(self, robot_state, closest_idx, robot_number):
+
+    def calculate_cross_track_error(self, robot_state, closest_idx, robot_index):
         """Calculate the cross-track error (perpendicular distance to the path)."""
         if closest_idx >= len(self.trajectory) - 1:
-            if robot_number == 1:
-                return self.tracking_errors1[-1] if self.tracking_errors1 else 0
-            else:
-                return self.tracking_errors2[-1] if self.tracking_errors2 else 0
+            return self.tracking_errors[robot_index][-1] if self.tracking_errors[robot_index] else 0
             
         # Get the robot position
         robot_x, robot_y, _ = robot_state
@@ -713,78 +784,59 @@ class MultiRobotSimulator:
         cross_track_error = np.linalg.norm(robot_pos - projected_point)
         
         # Store the projected point for visualization
-        if robot_number == 1:
-            self.projected_point1 = projected_point
-        else:
-            self.projected_point2 = projected_point
+        self.projected_points[robot_index] = projected_point
         
         return cross_track_error
-    
+
     def step(self):
-        """Perform one simulation step for both robots."""
+        """Perform one simulation step for all robots."""
         # Check if we've reached the end of the trajectory
-        if not self.trajectory or (self.target_point_idx1 >= len(self.trajectory) - 1 and 
-                                  self.target_point_idx2 >= len(self.trajectory) - 1):
+        if not self.trajectory or all(idx >= len(self.trajectory) - 1 for idx in self.target_point_idx):
             return False
         
-        # Robot 1 (PID Controller)
-        # Find the closest point on the trajectory to the robot
-        self.closest_point_idx1 = self.find_closest_point(self.robot1.state)
-        
-        # Find the target point ahead on the trajectory
-        self.target_point_idx1 = self.find_target_point(self.closest_point_idx1)
-        
-        # Get the target point
-        target_point1 = self.trajectory[self.target_point_idx1]
-        
-        # Calculate the cross-track error
-        cross_track_error1 = self.calculate_cross_track_error(self.robot1.state, self.closest_point_idx1, 1)
-        
-        # Call the controller function to get control inputs
-        v1, omega1 = self.controller1.control(self.robot1.state, target_point1, self.dt)
-        
-        # Update robot state
-        self.robot1.update(self.dt, v1, omega1)
-        
-        # Record metrics
-        self.tracking_errors1.append(cross_track_error1)
-        self.control_inputs1.append((v1, omega1))
-        self.robot_path1.append((self.robot1.state[0], self.robot1.state[1]))
-        
-        # Robot 2 (MPC Controller)
-        # Find the closest point on the trajectory to the robot
-        self.closest_point_idx2 = self.find_closest_point(self.robot2.state)
-        
-        # Find the target point ahead on the trajectory
-        self.target_point_idx2 = self.find_target_point(self.closest_point_idx2)
-        
-        # Get the target point
-        target_point2 = self.trajectory[self.target_point_idx2]
-        
-        # Calculate the cross-track error
-        cross_track_error2 = self.calculate_cross_track_error(self.robot2.state, self.closest_point_idx2, 2)
-        
-        # Call the controller function to get control inputs
-        v2, omega2 = self.controller2.control(self.robot2.state, target_point2, self.dt)
-        
-        # Update robot state
-        self.robot2.update(self.dt, v2, omega2)
-        
-        # Record metrics
-        self.tracking_errors2.append(cross_track_error2)
-        self.control_inputs2.append((v2, omega2))
-        self.robot_path2.append((self.robot2.state[0], self.robot2.state[1]))
+        # Process each robot
+        for i in range(self.num_robots):
+            # Skip robots that have reached the end
+            if self.target_point_idx[i] >= len(self.trajectory) - 1:
+                continue
+                
+            # Find the closest point on the trajectory to the robot
+            self.closest_point_idx[i] = self.find_closest_point(self.robots[i].state)
+            
+            # Find the target point ahead on the trajectory
+            self.target_point_idx[i] = self.find_target_point(self.closest_point_idx[i])
+            
+            # Get the target point
+            target_point = self.trajectory[self.target_point_idx[i]]
+            
+            # Calculate the cross-track error
+            cross_track_error = self.calculate_cross_track_error(
+                self.robots[i].state, self.closest_point_idx[i], i
+            )
+            
+            # Call the controller function to get control inputs
+            v, omega = self.controllers[i].control(
+                self.robots[i].state, target_point, self.dt
+            )
+            
+            # Update robot state
+            self.robots[i].update(self.dt, v, omega)
+            
+            # Record metrics
+            self.tracking_errors[i].append(cross_track_error)
+            self.control_inputs[i].append((v, omega))
+            self.robot_paths[i].append((self.robots[i].state[0], self.robots[i].state[1]))
         
         # Update time
         self.timestamps.append(self.t)
         self.t += self.dt
         
         return True
-    
+
     def setup_visualization(self):
-        """Set up the visualization environment for two robots."""
+        """Set up the visualization environment for multiple robots."""
         # Create figure and axes
-        self.fig = plt.figure(figsize=(14, 7))
+        self.fig = plt.figure(figsize=(16, 10))
         gs = gridspec.GridSpec(3, 4)
         
         # Main simulation plot
@@ -794,7 +846,7 @@ class MultiRobotSimulator:
         self.ax_sim.set_ylim(-10, 10)
         self.ax_sim.set_xlabel('X (m)')
         self.ax_sim.set_ylabel('Y (m)')
-        self.ax_sim.set_title('Differential Drive Robots - PID vs MPC')
+        self.ax_sim.set_title('Differential Drive Robots - Controller Comparison')
         self.ax_sim.grid(True)
         
         # Error plot
@@ -832,72 +884,74 @@ class MultiRobotSimulator:
         self.ax_metrics.set_title('Performance Metrics')
         self.ax_metrics.axis('off')
         
-        # Robot 1 visualization (PID - Blue)
-        self.robot1_body = Rectangle(
-            (0, 0), self.robot1.width, self.robot1.length, 
-            fill=True, color=self.robot1.color, alpha=0.7
-        )
-        self.robot1_body_patch = self.ax_sim.add_patch(self.robot1_body)
-        
-        # Robot 1 direction indicator
-        self.direction1 = plt.Line2D([0, 0], [0, 0], color='black', lw=2)
-        self.ax_sim.add_line(self.direction1)
-        
-        # Robot 2 visualization (MPC - Red)
-        self.robot2_body = Rectangle(
-            (0, 0), self.robot2.width, self.robot2.length, 
-            fill=True, color=self.robot2.color, alpha=0.7
-        )
-        self.robot2_body_patch = self.ax_sim.add_patch(self.robot2_body)
-        
-        # Robot 2 direction indicator
-        self.direction2 = plt.Line2D([0, 0], [0, 0], color='black', lw=2)
-        self.ax_sim.add_line(self.direction2)
-        
         # Trajectory visualization
         traj_x = [point[0] for point in self.trajectory]
         traj_y = [point[1] for point in self.trajectory]
-        self.traj_line, = self.ax_sim.plot(traj_x, traj_y, 'g-', alpha=0.5, label='Reference Path')
+        self.traj_line, = self.ax_sim.plot(traj_x, traj_y, 'k-', alpha=0.7, linewidth=2, label='Reference Path')
         
-        # Robot paths
-        self.path_line1, = self.ax_sim.plot([], [], 'b--', alpha=0.7, label='PID Robot Path')
-        self.path_line2, = self.ax_sim.plot([], [], 'r--', alpha=0.7, label='MPC Robot Path')
+        # Initialize visualization elements for each robot
+        for i in range(self.num_robots):
+            robot = self.robots[i]
+            color = robot.color
+            controller_name = self.controller_names[i]
+            
+            # Robot body
+            robot_body = Rectangle(
+                (0, 0), robot.width, robot.length, 
+                fill=True, color=color, alpha=0.7
+            )
+            self.robot_bodies.append(self.ax_sim.add_patch(robot_body))
+            
+            # Direction indicator
+            direction = plt.Line2D([0, 0], [0, 0], color='black', lw=2)
+            self.directions.append(direction)
+            self.ax_sim.add_line(direction)
+            
+            # Path line
+            path_line, = self.ax_sim.plot([], [], linestyle='--', color=color, alpha=0.7, 
+                                        label=f'{controller_name}')
+            self.path_lines.append(path_line)
+            
+            # Closest point
+            closest_point = Circle((0, 0), radius=0.06, fill=True, color=color, alpha=0.3)
+            self.closest_point_circles.append(self.ax_sim.add_patch(closest_point))
+            
+            # Target point
+            target_point = Circle((0, 0), radius=0.1, fill=True, color=color, alpha=0.5)
+            self.target_point_circles.append(self.ax_sim.add_patch(target_point))
+            
+            # Cross-track error line
+            cross_track_line, = self.ax_sim.plot([], [], color=color, lw=1, alpha=0.5)
+            self.cross_track_lines.append(cross_track_line)
+            
+            # Error plot line
+            error_line, = self.ax_error.plot([], [], color=color, 
+                                            label=f'{controller_name}')
+            self.error_lines.append(error_line)
+            
+            # Velocity plot lines
+            v_line, = self.ax_v.plot([], [], color=color, 
+                                    label=f'{controller_name}')
+            self.v_lines.append(v_line)
+            
+            omega_line, = self.ax_omega.plot([], [], color=color, 
+                                            label=f'{controller_name}')
+            self.omega_lines.append(omega_line)
+            
+            # Add text annotation for robot type
+            self.ax_sim.text(0.02, 0.95 - i*0.05, f'{color.capitalize()}: {controller_name}', 
+                            transform=self.ax_sim.transAxes, color=color)
         
-        # Closest points on trajectory
-        self.closest_point_circle1 = Circle((0, 0), radius=0.06, fill=True, color='blue', alpha=0.5)
-        self.ax_sim.add_patch(self.closest_point_circle1)
-        
-        self.closest_point_circle2 = Circle((0, 0), radius=0.06, fill=True, color='red', alpha=0.5)
-        self.ax_sim.add_patch(self.closest_point_circle2)
-        
-        # Target points ahead on trajectory
-        self.target_point_circle1 = Circle((0, 0), radius=0.1, fill=True, color='blue', alpha=0.5, label='PID Target')
-        self.ax_sim.add_patch(self.target_point_circle1)
-        
-        self.target_point_circle2 = Circle((0, 0), radius=0.1, fill=True, color='red', alpha=0.5, label='MPC Target')
-        self.ax_sim.add_patch(self.target_point_circle2)
-        
-        # Cross-track error line visualization
-        self.cross_track_line1, = self.ax_sim.plot([], [], 'b-', lw=1, alpha=0.5)
-        self.cross_track_line2, = self.ax_sim.plot([], [], 'r-', lw=1, alpha=0.5)
-        
-        # Performance plots
-        self.error_line1, = self.ax_error.plot([], [], 'b-', label='PID Error')
-        self.error_line2, = self.ax_error.plot([], [], 'r-', label='MPC Error')
-        self.ax_error.legend()
-        
-        self.v_line1, = self.ax_v.plot([], [], 'b-', label='PID')
-        self.v_line2, = self.ax_v.plot([], [], 'r-', label='MPC')
-        self.ax_v.legend()
-        
-        self.omega_line1, = self.ax_omega.plot([], [], 'b-', label='PID')
-        self.omega_line2, = self.ax_omega.plot([], [], 'r-', label='MPC')
-        self.ax_omega.legend()
+        # Add legends
+        self.ax_sim.legend(loc='upper left')
+        self.ax_error.legend(loc='upper left')
+        self.ax_v.legend(loc='upper left')
+        self.ax_omega.legend(loc='upper left')
         
         # Trajectory selection radio buttons
         self.radio_traj = RadioButtons(
             self.ax_traj, ('circle', 'eight', 'square', 'custom'),
-            active=0  # Default to circle
+            active=3  # Default to custom
         )
         self.radio_traj.on_clicked(self.set_trajectory)
         
@@ -915,15 +969,6 @@ class MultiRobotSimulator:
         )
         self.slider_lookahead.on_changed(self.update_lookahead)
         
-        # Add legend for the robots
-        self.ax_sim.legend(loc='upper left')
-        
-        # Add text annotation for robot types
-        self.robot1_text = self.ax_sim.text(0.02, 0.95, 'Blue: PID Controller', 
-                                          transform=self.ax_sim.transAxes, color='blue')
-        self.robot2_text = self.ax_sim.text(0.02, 0.90, 'Red: MPC Controller', 
-                                          transform=self.ax_sim.transAxes, color='red')
-        
         # Animation
         self.anim_running = True
         self.anim = animation.FuncAnimation(
@@ -932,11 +977,11 @@ class MultiRobotSimulator:
         )
         
         plt.tight_layout()
-    
+
     def update_lookahead(self, val):
         """Update the lookahead distance."""
         self.lookahead_distance = val
-    
+
     def update_frame(self, frame):
         """Update animation frame."""
         # Perform simulation step
@@ -950,103 +995,75 @@ class MultiRobotSimulator:
                 pass
             return
         
-        # Update robot visualizations
-        self.update_robot_visualization(self.robot1, self.robot1_body, self.direction1)
-        self.update_robot_visualization(self.robot2, self.robot2_body, self.direction2)
-        
-        # Update closest and target point visualization
-        if self.closest_point_idx1 < len(self.trajectory):
-            self.closest_point_circle1.center = self.trajectory[self.closest_point_idx1]
-        
-        if self.target_point_idx1 < len(self.trajectory):
-            self.target_point_circle1.center = self.trajectory[self.target_point_idx1]
+        # Update visualizations for each robot
+        for i in range(self.num_robots):
+            # Update robot visualization
+            self.update_robot_visualization(self.robots[i], self.robot_bodies[i], self.directions[i])
             
-        if self.closest_point_idx2 < len(self.trajectory):
-            self.closest_point_circle2.center = self.trajectory[self.closest_point_idx2]
-        
-        if self.target_point_idx2 < len(self.trajectory):
-            self.target_point_circle2.center = self.trajectory[self.target_point_idx2]
-        
-        # Update cross-track error line visualization
-        if hasattr(self, 'projected_point1'):
-            robot1_x, robot1_y, _ = self.robot1.state
-            self.cross_track_line1.set_data(
-                [robot1_x, self.projected_point1[0]],
-                [robot1_y, self.projected_point1[1]]
-            )
+            # Update closest and target point visualization
+            if self.closest_point_idx[i] < len(self.trajectory):
+                self.closest_point_circles[i].center = self.trajectory[self.closest_point_idx[i]]
             
-        if hasattr(self, 'projected_point2'):
-            robot2_x, robot2_y, _ = self.robot2.state
-            self.cross_track_line2.set_data(
-                [robot2_x, self.projected_point2[0]],
-                [robot2_y, self.projected_point2[1]]
-            )
+            if self.target_point_idx[i] < len(self.trajectory):
+                self.target_point_circles[i].center = self.trajectory[self.target_point_idx[i]]
+            
+            # Update cross-track error line visualization
+            if self.projected_points[i] is not None:
+                robot_x, robot_y, _ = self.robots[i].state
+                self.cross_track_lines[i].set_data(
+                    [robot_x, self.projected_points[i][0]],
+                    [robot_y, self.projected_points[i][1]]
+                )
+            
+            # Update path visualization
+            if self.robot_paths[i]:
+                path_x = [point[0] for point in self.robot_paths[i]]
+                path_y = [point[1] for point in self.robot_paths[i]]
+                self.path_lines[i].set_data(path_x, path_y)
         
-        # Update plots
-        # Robot paths
-        path1_x = [point[0] for point in self.robot_path1]
-        path1_y = [point[1] for point in self.robot_path1]
-        self.path_line1.set_data(path1_x, path1_y)
-        
-        path2_x = [point[0] for point in self.robot_path2]
-        path2_y = [point[1] for point in self.robot_path2]
-        self.path_line2.set_data(path2_x, path2_y)
-        
-        # Error plot
+        # Update error plot
         if self.timestamps:
-            if self.tracking_errors1:
-                self.error_line1.set_data(self.timestamps, self.tracking_errors1)
-            if self.tracking_errors2:
-                self.error_line2.set_data(self.timestamps, self.tracking_errors2)
+            for i in range(self.num_robots):
+                if self.tracking_errors[i]:
+                    self.error_lines[i].set_data(self.timestamps, self.tracking_errors[i])
+            
             self.ax_error.relim()
             self.ax_error.autoscale_view()
             
-            # Calculate average errors
-            avg_error1 = np.mean(self.tracking_errors1) if self.tracking_errors1 else 0
-            avg_error2 = np.mean(self.tracking_errors2) if self.tracking_errors2 else 0
+            # Calculate average errors for metrics display
+            avg_errors = []
+            for i in range(self.num_robots):
+                avg_error = np.mean(self.tracking_errors[i]) if self.tracking_errors[i] else 0
+                avg_errors.append(avg_error)
             
-            # Update metrics text
-            metrics_text = f"Average Errors:\nPID: {avg_error1:.4f} m\nMPC: {avg_error2:.4f} m"
+            # Update metrics text with sorted errors
+            sorted_indices = np.argsort(avg_errors)
+            metrics_text = "Average Errors (Best to Worst):\n"
+            for rank, idx in enumerate(sorted_indices):
+                controller_name = self.controller_names[idx]
+                metrics_text += f"{rank+1}. {controller_name}: {avg_errors[idx]:.4f} m\n"
             
-            # Add current error to title
-            if self.tracking_errors1 and self.tracking_errors2:
-                current_error1 = self.tracking_errors1[-1]
-                current_error2 = self.tracking_errors2[-1]
-                self.ax_error.set_title(f'Cross-Track Error: PID={current_error1:.3f}m, MPC={current_error2:.3f}m')
-                
-                # Clear and update the metrics axis
-                self.ax_metrics.clear()
-                self.ax_metrics.text(0.1, 0.5, metrics_text, verticalalignment='center')
-                self.ax_metrics.set_title('Performance Metrics')
-                self.ax_metrics.axis('off')
+            # Clear and update the metrics axis
+            self.ax_metrics.clear()
+            self.ax_metrics.text(0.1, 0.5, metrics_text, verticalalignment='center')
+            self.ax_metrics.set_title('Performance Metrics')
+            self.ax_metrics.axis('off')
         
-        # Control input plots
-        if self.timestamps and self.control_inputs1 and self.control_inputs2:
-            v1_values = [inputs[0] for inputs in self.control_inputs1]
-            omega1_values = [inputs[1] for inputs in self.control_inputs1]
+        # Update velocity plots
+        if self.timestamps:
+            for i in range(self.num_robots):
+                if self.control_inputs[i]:
+                    v_values = [inputs[0] for inputs in self.control_inputs[i]]
+                    omega_values = [inputs[1] for inputs in self.control_inputs[i]]
+                    
+                    self.v_lines[i].set_data(self.timestamps, v_values)
+                    self.omega_lines[i].set_data(self.timestamps, omega_values)
             
-            v2_values = [inputs[0] for inputs in self.control_inputs2]
-            omega2_values = [inputs[1] for inputs in self.control_inputs2]
-            
-            self.v_line1.set_data(self.timestamps, v1_values)
-            self.v_line2.set_data(self.timestamps, v2_values)
             self.ax_v.relim()
             self.ax_v.autoscale_view()
-            
-            self.omega_line1.set_data(self.timestamps, omega1_values)
-            self.omega_line2.set_data(self.timestamps, omega2_values)
             self.ax_omega.relim()
             self.ax_omega.autoscale_view()
-            
-            # Add current values to titles
-            current_v1 = v1_values[-1]
-            current_omega1 = omega1_values[-1]
-            current_v2 = v2_values[-1]
-            current_omega2 = omega2_values[-1]
-            
-            self.ax_v.set_title(f'v: PID={current_v1:.2f}, MPC={current_v2:.2f} m/s')
-            self.ax_omega.set_title(f'ω: PID={current_omega1:.2f}, MPC={current_omega2:.2f} rad/s')
-    
+
     def update_robot_visualization(self, robot, body, direction):
         """Update the robot visualization based on current state."""
         x, y, theta = robot.state
@@ -1066,28 +1083,30 @@ class MultiRobotSimulator:
             [x, x + dir_length * np.cos(theta)],
             [y, y + dir_length * np.sin(theta)]
         )
-    
+
     def run(self):
         """Run the simulation (show the plot)."""
         plt.show()
 
     def get_data(self):
         """Return the simulation data for analysis."""
-        return {
+        data = {
             'timestamps': self.timestamps,
-            'tracking_errors1': self.tracking_errors1,
-            'tracking_errors2': self.tracking_errors2,
-            'control_inputs1': self.control_inputs1,
-            'control_inputs2': self.control_inputs2,
-            'robot_path1': self.robot_path1,
-            'robot_path2': self.robot_path2,
             'trajectory': self.trajectory
         }
+        
+        for i in range(self.num_robots):
+            controller_name = self.controller_names[i]
+            data[f'tracking_errors_{controller_name}'] = self.tracking_errors[i]
+            data[f'control_inputs_{controller_name}'] = self.control_inputs[i]
+            data[f'robot_path_{controller_name}'] = self.robot_paths[i]
+        
+        return data
+    
 
-# Main
 if __name__ == "__main__":
     # Create the multi-robot simulator
     sim = MultiRobotSimulator()
-    
+
     # Run the simulation
     sim.run()
