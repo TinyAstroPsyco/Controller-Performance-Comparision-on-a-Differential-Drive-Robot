@@ -671,6 +671,7 @@ def pid_controller(robot_state, target_point, dt):
     
     return v, omega
 
+# Functionality build for an MPC Controller
 def mpc_controller(robot_state, target_point, dt):
     """
     Simple MPC controller for path following.
@@ -766,10 +767,8 @@ def mpc_controller(robot_state, target_point, dt):
     return best_v, best_omega
 
 
-# Example usage
+# Main
 if __name__ == "__main__":
-    # Create the simulator with the adaptive path following controller
-    # You would replace sample_adaptive_controller with your own controller function
     sim = Simulator(controller_function=mpc_controller)
     
     # Run the simulation
