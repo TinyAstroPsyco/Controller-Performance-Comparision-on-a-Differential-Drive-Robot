@@ -141,7 +141,7 @@ class TrajectoryGenerator:
         return trajectory
     
     @staticmethod
-    def custom(points=None, csv_path='trajectory.csv', num_points_between=10):
+    def custom(points=None, csv_path='Trajectories\trajectory_2.csv', num_points_between=10):
         """Generate a trajectory from a list of waypoints or a CSV file.
         
         Args:
@@ -450,20 +450,20 @@ class FastMPCController:
         
     def control(self, robot_state, target_point, dt):
         # MPC parameters
-        N = 10  # Prediction horizon
+        N = 20  # Prediction horizon
         
         # Current state
         x, y, theta = robot_state
         x_target, y_target = target_point
         
         # Cost function weights with priority on speed
-        w_pos = 0.8      # Position error weight (lower to prioritize speed)
-        w_theta = 0.7    # Heading error weight (lower to prioritize speed)
+        w_pos = 0.5      # Position error weight (lower to prioritize speed)
+        w_theta = 1    # Heading error weight (lower to prioritize speed)
         w_v = 0.05       # Velocity smoothness weight (lower to allow faster acceleration)
-        w_omega = 0.2    # Angular velocity smoothness weight
+        w_omega = 0.1    # Angular velocity smoothness weight
         
         # Control constraints with higher minimum velocity
-        v_min, v_max = 0.5, 5.0  # Minimum velocity of 0.5 instead of 0
+        v_min, v_max = 0, 5.0  # Minimum velocity of 0.5 instead of 0
         omega_min, omega_max = -np.pi, np.pi
         
         # Velocity bias to encourage higher speeds
@@ -538,6 +538,7 @@ class FastMPCController:
 class MultiRobotSimulator:
     """Simulator for multiple differential drive robots with different controllers."""
     def __init__(self, dt=0.05, lookahead_distance=0.5):
+        
         # Simulation parameters
         self.dt = dt  # time step in seconds
         self.t = 0    # current time
@@ -567,9 +568,9 @@ class MultiRobotSimulator:
         self.controller_names.append("PD")
         
         # Robot 4 - LQR controller (orange)
-        self.robots.append(DifferentialDriveRobot(x=0, y=0, theta=0, color=colors[3]))
-        self.controllers.append(LQRController())
-        self.controller_names.append("LQR")
+        # self.robots.append(DifferentialDriveRobot(x=0, y=0, theta=0, color=colors[3]))
+        # self.controllers.append(LQRController())
+        # self.controller_names.append("LQR")
         
         # Robot 5 - Fast MPC controller (purple)
         self.robots.append(DifferentialDriveRobot(x=0, y=0, theta=0, color=colors[4]))
@@ -577,16 +578,16 @@ class MultiRobotSimulator:
         self.controller_names.append("Fast MPC")
         
         # Robot 6 - Open Loop controller (brown)
-        self.robots.append(DifferentialDriveRobot(x=0, y=0, theta=0, color=colors[5]))
-        self.controllers.append(OpenLoopController())
-        self.controller_names.append("Open Loop")
+        # self.robots.append(DifferentialDriveRobot(x=0, y=0, theta=0, color=colors[5]))
+        # self.controllers.append(OpenLoopController())
+        # self.controller_names.append("Open Loop")
         
         # Number of robots
         self.num_robots = len(self.robots)
         
         # Trajectory parameters and data
         self.trajectory_type = "custom"
-        self.trajectory = TrajectoryGenerator.custom(csv_path="trajectory.csv")
+        self.trajectory = TrajectoryGenerator.custom(csv_path="Trajectories/trajectory_2.csv")
         self.trajectory_array = np.array(self.trajectory)  # For efficient distance calculations
         
         # Robot tracking data
@@ -797,8 +798,8 @@ class MultiRobotSimulator:
         # Process each robot
         for i in range(self.num_robots):
             # Skip robots that have reached the end
-            if self.target_point_idx[i] >= len(self.trajectory) - 1:
-                continue
+            # if self.target_point_idx[i] >= len(self.trajectory) - 1:
+            #     continue
                 
             # Find the closest point on the trajectory to the robot
             self.closest_point_idx[i] = self.find_closest_point(self.robots[i].state)
@@ -836,18 +837,19 @@ class MultiRobotSimulator:
     def setup_visualization(self):
         """Set up the visualization environment for multiple robots."""
         # Create figure and axes
-        self.fig = plt.figure(figsize=(16, 10))
+        self.fig = plt.figure(figsize=(16, 8))
         gs = gridspec.GridSpec(3, 4)
         
         # Main simulation plot
         self.ax_sim = self.fig.add_subplot(gs[:2, :2])
         self.ax_sim.set_aspect('equal')
-        self.ax_sim.set_xlim(-10, 10)
-        self.ax_sim.set_ylim(-10, 10)
+        window_val = 5
+        self.ax_sim.set_xlim(-1 * window_val, window_val)
+        self.ax_sim.set_ylim(-1 * window_val, window_val)
         self.ax_sim.set_xlabel('X (m)')
         self.ax_sim.set_ylabel('Y (m)')
         self.ax_sim.set_title('Differential Drive Robots - Controller Comparison')
-        self.ax_sim.grid(True)
+        self.ax_sim.grid(False)
         
         # Error plot
         self.ax_error = self.fig.add_subplot(gs[0, 2:])
@@ -972,11 +974,11 @@ class MultiRobotSimulator:
         # Animation
         self.anim_running = True
         self.anim = animation.FuncAnimation(
-            self.fig, self.update_frame, interval=int(self.dt * 1000),
-            blit=False
+            self.fig, self.update_frame, interval=int(self.dt * 1000) * 4,
+            blit=False, save_count= 100 # Limit frame caching
         )
         
-        plt.tight_layout()
+        # plt.tight_layout()
 
     def update_lookahead(self, val):
         """Update the lookahead distance."""
@@ -1021,6 +1023,7 @@ class MultiRobotSimulator:
                 path_y = [point[1] for point in self.robot_paths[i]]
                 self.path_lines[i].set_data(path_x, path_y)
         
+
         # Update error plot
         if self.timestamps:
             for i in range(self.num_robots):
