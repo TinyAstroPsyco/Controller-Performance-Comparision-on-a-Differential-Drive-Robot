@@ -8,8 +8,8 @@ from matplotlib import gridspec
 from scipy.spatial.distance import cdist
 import pandas as pd
 
-# Loading the trajectory from a csv:
 
+# Loading the trajectory from a csv:
 def load_trajectory_from_csv(csv_path, num_points_between=10):
     """
     Load x,y coordinates from a CSV file and generate a trajectory.
@@ -141,7 +141,7 @@ class TrajectoryGenerator:
         return trajectory
     
     @staticmethod
-    def custom(points=None, csv_path='Trajectories\trajectory_2.csv', num_points_between=10):
+    def custom(points=None, csv_path='Trajectories/closureless_trajectory.csv', num_points_between=10):
         """Generate a trajectory from a list of waypoints or a CSV file.
         
         Args:
@@ -229,9 +229,9 @@ class PIDController:
         self.prev_angle_error = angle_error
         
         # PID gains for linear velocity
-        kp_v = 2.0   # Proportional gain
+        kp_v = 0.8   # Proportional gain
         ki_v = 1.0   # Integral gain
-        kd_v = 0.6   # Derivative gain
+        kd_v = 1   # Derivative gain
         
         # PID gains for angular velocity
         kp_omega = 2.0   # Proportional gain
@@ -240,7 +240,7 @@ class PIDController:
         
         # Calculate linear velocity using PID
         v = (kp_v * dist_to_target + 
-             ki_v * self.dist_error_sum + 
+             ki_v * self.dist_error_sum - 
              kd_v * dist_error_deriv)
         
         # Calculate angular velocity using PID
@@ -261,17 +261,19 @@ class MPCController:
         
     def control(self, robot_state, target_point, dt):
         # MPC parameters
-        N = 10  # Prediction horizon
+        N = 8  # Prediction horizon
         
         # Current state
         x, y, theta = robot_state
         x_target, y_target = target_point
+        v_desired = 5 # 5 m/s
         
         # Cost function weights
-        w_pos = 1.0      # Position error weight
-        w_theta = 1.5    # Heading error weight
-        w_v = 0.1        # Velocity smoothness weight
+        w_pos = 3      # Position error weight
+        w_theta = 3   # Heading error weight
+        w_v = 0.05        # Velocity smoothness weight
         w_omega = 0.2    # Angular velocity smoothness weight
+        w_speed_tracking = 1
         
         # Control constraints
         v_min, v_max = 0.2, 5.0
@@ -283,8 +285,10 @@ class MPCController:
         best_omega = self.last_omega
         
         # Discretized control space to search
-        v_options = np.linspace(max(v_min, self.last_v - 0.5), 
-                               min(v_max, self.last_v + 0.5), 5)
+        # v_options = np.linspace(max(v_min, self.last_v - 0.5), 
+        #                        min(v_max, self.last_v + 0.5), 5)
+        v_options = np.linspace(v_min, v_max, 10)  # Search full range!
+
         omega_options = np.linspace(max(omega_min, self.last_omega - 0.5), 
                                    min(omega_max, self.last_omega + 0.5), 7)
         
@@ -312,12 +316,13 @@ class MPCController:
                     # Control smoothness cost
                     v_change = abs(v - self.last_v)
                     omega_change = abs(omega - self.last_omega)
-                    
+
+                    speed_tracking_cost = w_speed_tracking * abs(v - v_desired)
                     # Weighted cost for this step
                     step_cost = (w_pos * pos_error + 
                                 w_theta * abs(theta_error) + 
                                 w_v * v_change + 
-                                w_omega * omega_change)
+                                w_omega * omega_change + speed_tracking_cost)
                     
                     # Discount future costs
                     discount = 0.9 ** i
@@ -341,6 +346,7 @@ class PDController:
     """Proportional-Derivative controller for trajectory tracking."""
     def __init__(self):
         self.prev_angle_error = 0.0
+        self.prev_distance_error = 0.0
         
     def control(self, robot_state, target_point, dt):
         x, y, theta = robot_state
@@ -349,6 +355,9 @@ class PDController:
         # Calculate the distance to target
         dist_to_target = np.sqrt((x_target - x)**2 + (y_target - y)**2)
         
+        # calculating the distance error rate
+        dist_error_der = (dist_to_target - self.prev_distance_error) / dt
+        self.prev_distance_error = dist_to_target
         # Calculate the angle to the target
         angle_to_target = np.arctan2(y_target - y, x_target - x)
         
@@ -362,12 +371,13 @@ class PDController:
         self.prev_angle_error = angle_error
         
         # PD gains
-        kp_v = 1.5    # Proportional gain for velocity
+        kp_v = 2    # Proportional gain for velocity
+        kd_v = 1
         kp_omega = 2.0  # Proportional gain for angular velocity
         kd_omega = 1.0  # Derivative gain for angular velocity
         
         # Calculate linear velocity - proportional to distance
-        v = kp_v * dist_to_target
+        v = kp_v * dist_to_target + kd_v * dist_error_der
         v = max(0.2, min(v, 5.0))  # Clamp between 0.2 and 5.0
         
         # Calculate angular velocity - PD control on the heading error
@@ -587,7 +597,7 @@ class MultiRobotSimulator:
         
         # Trajectory parameters and data
         self.trajectory_type = "custom"
-        self.trajectory = TrajectoryGenerator.custom(csv_path="Trajectories/trajectory_2.csv")
+        self.trajectory = TrajectoryGenerator.custom(csv_path="Trajectories/closureless_trajectory.csv")
         self.trajectory_array = np.array(self.trajectory)  # For efficient distance calculations
         
         # Robot tracking data
@@ -680,7 +690,7 @@ class MultiRobotSimulator:
             self.trajectory = TrajectoryGenerator.square()
         elif trajectory_type == "custom":
             # Default custom path from CSV
-            self.trajectory = TrajectoryGenerator.custom(csv_path="trajectory.csv")
+            self.trajectory = TrajectoryGenerator.custom(csv_path="Trajectories/closureless_trajectory.csv")
         
         # Update trajectory array for distance calculations
         self.trajectory_array = np.array(self.trajectory)
@@ -798,8 +808,26 @@ class MultiRobotSimulator:
         # Process each robot
         for i in range(self.num_robots):
             # Skip robots that have reached the end
-            # if self.target_point_idx[i] >= len(self.trajectory) - 1:
-            #     continue
+            # if self.target_point_idx[i] >= len(self.trajectory) - 1 and self.robots[i].state == self.trajectory[-1]:
+            cross_track_error_forend = self.calculate_cross_track_error(
+                self.robots[i].state, self.closest_point_idx[i], i
+            )
+            if self.target_point_idx[i] >= len(self.trajectory) - 1 and  cross_track_error_forend <= 0.01:
+                # Keep the robot stationary at its current position
+                v, omega = 0.0, 0.0
+                
+                # Record zero control inputs
+                self.control_inputs[i].append((v, omega))
+                
+                # Add the same position to path (robot stays in place)
+                self.robot_paths[i].append((self.robots[i].state[0], self.robots[i].state[1]))
+                
+                # Use the last error value (or 0 if none exists)
+                last_error = self.tracking_errors[i][-1] if self.tracking_errors[i] else 0
+                self.tracking_errors[i].append(last_error)
+                
+                # Continue to next robot
+                continue
                 
             # Find the closest point on the trajectory to the robot
             self.closest_point_idx[i] = self.find_closest_point(self.robots[i].state)
@@ -843,8 +871,8 @@ class MultiRobotSimulator:
         # Main simulation plot
         self.ax_sim = self.fig.add_subplot(gs[:2, :2])
         self.ax_sim.set_aspect('equal')
-        window_val = 5
-        self.ax_sim.set_xlim(-1 * window_val, window_val)
+        window_val = 20
+        self.ax_sim.set_xlim(-0.5 * window_val, window_val)
         self.ax_sim.set_ylim(-1 * window_val, window_val)
         self.ax_sim.set_xlabel('X (m)')
         self.ax_sim.set_ylabel('Y (m)')
@@ -974,7 +1002,7 @@ class MultiRobotSimulator:
         # Animation
         self.anim_running = True
         self.anim = animation.FuncAnimation(
-            self.fig, self.update_frame, interval=int(self.dt * 1000) * 4,
+            self.fig, self.update_frame, interval=int(self.dt * 1000),
             blit=False, save_count= 100 # Limit frame caching
         )
         
