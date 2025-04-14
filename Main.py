@@ -9,6 +9,11 @@ from scipy.spatial.distance import cdist
 import pandas as pd
 
 
+global max_vel
+
+max_vel = 5
+
+
 # Loading the trajectory from a csv:
 def load_trajectory_from_csv(csv_path, num_points_between=10):
     """
@@ -202,12 +207,13 @@ class PIDController:
         self.v_error_sum = 0.0
         self.prev_distance = 0.0  # For estimating velocity
 
-    def control(self, robot_state, target_point, dt):
+    def control(self, robot_state, target_point, dt, trajectory):
         x, y, theta = robot_state
         x_target, y_target = target_point
 
         # Desired linear velocity
-        v_desired = 5.0
+        global max_vel
+        v_desired = max_vel
 
         # --- Angular control (trajectory tracking) ---
         angle_to_target = np.arctan2(y_target - y, x_target - x)
@@ -247,7 +253,7 @@ class PIDController:
         v *= np.cos(angle_error)
 
         # Clamp velocity
-        v = np.clip(v, 0.2, 5.0)
+        v = np.clip(v, 0.2, max_vel)
 
         return v, omega
 
@@ -258,9 +264,9 @@ class MPCController:
         self.last_v = 0.0
         self.last_omega = 0.0
         
-    def control(self, robot_state, target_point, dt):
+    def control(self, robot_state, target_point, dt, _):
         # MPC parameters
-        N = 8  # Prediction horizon
+        N = 10  # Prediction horizon
         
         # Current state
         x, y, theta = robot_state
@@ -275,7 +281,8 @@ class MPCController:
         w_speed_tracking = 1
         
         # Control constraints
-        v_min, v_max = 0.2, 5.0
+        global max_vel
+        v_min, v_max = 0.2, max_vel
         omega_min, omega_max = -np.pi, np.pi
         
         # Simple MPC approach: evaluate multiple control sequences and pick the best
@@ -339,7 +346,6 @@ class MPCController:
         
         return best_v, best_omega
 
-
 class PDController:
     """PD controller that tracks heading using omega, and maintains desired speed."""
     def __init__(self):
@@ -347,12 +353,13 @@ class PDController:
         self.prev_v_error = 0.0  # For speed tracking derivative
         self.prev_distance_error = 0.0
 
-    def control(self, robot_state, target_point, dt):
+    def control(self, robot_state, target_point, dt, trajectory):
         x, y, theta = robot_state
         x_target, y_target = target_point
 
         # Desired speed
-        v_desired = 5.0
+        global max_vel
+        v_desired = max_vel
 
         # --- Angular control (trajectory tracking) ---
         angle_to_target = np.arctan2(y_target - y, x_target - x)
@@ -382,11 +389,11 @@ class PDController:
         kd_v = 0.2
 
         v = kp_v * v_error +kd_v * v_error_deriv
-        print(f'V bevore clipping  >> {v}')
+        # print(f'V bevore clipping  >> {v}')
         # Optional: slow down if heading error is large
         v *= np.cos(angle_error)
-        v = np.clip(v, 0.2, 5.0)
-        print(f'V after clipping >> {v}')
+        v = np.clip(v, 0.2, max_vel)
+        # print(f'V after clipping >> {v}')
         return v, omega
 
 
@@ -399,7 +406,7 @@ class LQRController:
             [0.0, 1.5, 2.0]   # Gain for y position and heading errors
         ])
         
-    def control(self, robot_state, target_point, dt):
+    def control(self, robot_state, target_point, dt, trajectory):
         x, y, theta = robot_state
         x_target, y_target = target_point
         
@@ -444,7 +451,7 @@ class OpenLoopController:
         self.omega = 0.0  # Initial angular velocity
         self.t = 0.0  # Time tracking
         
-    def control(self, robot_state, target_point, dt):
+    def control(self, robot_state, target_point, dt, trajectory):
         # Increment time
         self.t += dt
         
@@ -462,9 +469,9 @@ class FastMPCController:
         self.last_v = 0.0
         self.last_omega = 0.0
         
-    def control(self, robot_state, target_point, dt):
+    def control(self, robot_state, target_point, dt, trajectory):
         # MPC parameters
-        N = 20  # Prediction horizon
+        N = 10  # Prediction horizon
         
         # Current state
         x, y, theta = robot_state
@@ -477,7 +484,8 @@ class FastMPCController:
         w_omega = 0.1    # Angular velocity smoothness weight
         
         # Control constraints with higher minimum velocity
-        v_min, v_max = 0, 5.0  # Minimum velocity of 0.5 instead of 0
+        global max_vel
+        v_min, v_max = 0, max_vel  # Minimum velocity of 0.5 instead of 0
         omega_min, omega_max = -np.pi, np.pi
         
         # Velocity bias to encourage higher speeds
@@ -602,7 +610,7 @@ class MultiRobotSimulator:
         # Trajectory parameters and data
         self.trajectory_type = "custom"
         self.trajectory = TrajectoryGenerator.custom(csv_path="Trajectories/closureless_trajectory.csv")
-        self.trajectory_array = np.array(self.trajectory)  # For efficient distance calculations
+        self.trajectory_array = np.array(self.trajectory)   # For efficient distance calculations
         
         # Robot tracking data
         self.closest_point_idx = [0] * self.num_robots
@@ -849,7 +857,7 @@ class MultiRobotSimulator:
             
             # Call the controller function to get control inputs
             v, omega = self.controllers[i].control(
-                self.robots[i].state, target_point, self.dt
+                self.robots[i].state, target_point, self.dt, self.trajectory
             )
             
             # Update robot state
@@ -1137,7 +1145,89 @@ class MultiRobotSimulator:
             data[f'robot_path_{controller_name}'] = self.robot_paths[i]
         
         return data
-    
+    def save_individual_subplots(self, prefix="results/plot"):
+        import os
+        os.makedirs("results", exist_ok=True)
+
+        # Save Error Plot
+        fig_error = plt.figure(figsize=(20, 7))
+
+        ax = fig_error.add_subplot(111)
+        for i, line in enumerate(self.error_lines):
+            ax.plot(self.timestamps, self.tracking_errors[i], label=self.controller_names[i], color=line.get_color())
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel("Error (m)")
+        ax.set_title("Cross-Track Error")
+        ax.grid(True)
+        ax.legend()
+        fig_error.savefig(f"{prefix}_error.png", dpi=300, bbox_inches='tight')
+        plt.close(fig_error)
+
+        # Save Velocity Plot
+        fig_v = plt.figure(figsize=(20, 7))
+        ax = fig_v.add_subplot(111)
+        for i, line in enumerate(self.v_lines):
+            v_values = [inputs[0] for inputs in self.control_inputs[i]]
+            ax.plot(self.timestamps, v_values, label=self.controller_names[i], color=line.get_color())
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel("v (m/s)")
+        ax.set_title("Linear Velocity")
+        ax.grid(True)
+        ax.legend()
+        fig_v.savefig(f"{prefix}_velocity.png", dpi=300, bbox_inches='tight')
+        plt.close(fig_v)
+
+        # Save Omega Plot
+        fig_omega = plt.figure(figsize=(20, 7))
+        ax = fig_omega.add_subplot(111)
+        for i, line in enumerate(self.omega_lines):
+            omega_values = [inputs[1] for inputs in self.control_inputs[i]]
+            ax.plot(self.timestamps, omega_values, label=self.controller_names[i], color=line.get_color())
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel("ω (rad/s)")
+        ax.set_title("Angular Velocity")
+        ax.grid(True)
+        ax.legend()
+        fig_omega.savefig(f"{prefix}_omega.png", dpi=300, bbox_inches='tight')
+        plt.close(fig_omega)
+
+        print("[INFO] Individual subplots saved under 'results/' folder.")
+
+    def save_comparison_plot(self, filename="results/controller_comparison.png"):
+        import os
+        os.makedirs("results", exist_ok=True)
+
+        # Create a standalone figure with just the ax_sim contents
+        fig, ax = plt.subplots(figsize=(8, 8))
+
+        # Plot reference trajectory
+        traj_x = [point[0] for point in self.trajectory]
+        traj_y = [point[1] for point in self.trajectory]
+        ax.plot(traj_x, traj_y, 'k--', label='Reference Trajectory', linewidth=2)
+
+        # Plot each robot path
+        for i in range(self.num_robots):
+            path = self.robot_paths[i]
+            if not path:
+                continue
+            path_x = [p[0] for p in path]
+            path_y = [p[1] for p in path]
+            color = self.robots[i].color
+            ax.plot(path_x, path_y, linestyle='-', linewidth=2, alpha=0.8, label=self.controller_names[i], color=color)
+
+        ax.set_aspect('equal')
+        ax.set_xlabel('X (m)')
+        ax.set_ylabel('Y (m)')
+        ax.set_title('Controller Comparison: Robot Paths')
+        ax.grid(True)
+        ax.legend()
+        ax.set_xlim(self.ax_sim.get_xlim())
+        ax.set_ylim(self.ax_sim.get_ylim())
+
+        fig.savefig(filename, dpi=300, bbox_inches='tight')
+        plt.close(fig)
+        print(f"[INFO] Controller comparison plot saved to {filename}")
+        
 
 if __name__ == "__main__":
     # Create the multi-robot simulator
@@ -1145,3 +1235,5 @@ if __name__ == "__main__":
 
     # Run the simulation
     sim.run()
+    sim.save_individual_subplots("results/sim")
+    sim.save_comparison_plot()
