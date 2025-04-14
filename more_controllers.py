@@ -240,7 +240,7 @@ class PIDController:
         
         # Calculate linear velocity using PID
         v = (kp_v * dist_to_target + 
-             ki_v * self.dist_error_sum - 
+             ki_v * self.dist_error_sum + 
              kd_v * dist_error_deriv)
         
         # Calculate angular velocity using PID
