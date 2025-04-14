@@ -192,68 +192,6 @@ class TrajectoryGenerator:
         print(f'Generated trajectory with {len(trajectory)} points')
         return trajectory
 
-# Controllers from the original file
-class PIDController_old:
-    def __init__(self):
-        self.prev_dist_error = 0.0
-        self.prev_angle_error = 0.0
-        self.dist_error_sum = 0.0
-        self.angle_error_sum = 0.0
-        
-    def control(self, robot_state, target_point, dt):
-        x, y, theta = robot_state # Has the current position of the robot and the heading
-        x_target, y_target = target_point # This is the a (x,y) point on the trajectory that is looking ahead and changes continunously
-        
-        # Calculate the distance to target
-        dist_to_target = np.sqrt((x_target - x)**2 + (y_target - y)**2) # I am computing my distance to the target point from the current state
-        
-        # Calculate the angle to the target
-        angle_to_target = np.arctan2(y_target - y, x_target - x) # Computing the heading
-        
-        # Calculate the angle error (normalized between -pi and pi)
-        angle_error = np.arctan2(np.sin(angle_to_target - theta), np.cos(angle_to_target - theta))
-        
-        # Calculate error derivatives
-        dist_error_deriv = (dist_to_target - self.prev_dist_error) / dt
-        angle_error_deriv = (angle_error - self.prev_angle_error) / dt
-        
-        # Update error integrals (with anti-windup)
-        self.dist_error_sum += dist_to_target * dt
-        self.dist_error_sum = np.clip(self.dist_error_sum, -1.0, 1.0)  # Anti-windup
-        
-        self.angle_error_sum += angle_error * dt
-        self.angle_error_sum = np.clip(self.angle_error_sum, -1.0, 1.0)  # Anti-windup
-        
-        # Store current errors for next iteration
-        self.prev_dist_error = dist_to_target
-        self.prev_angle_error = angle_error
-        
-        # PID gains for linear velocity
-        kp_v = 0.8   # Proportional gain
-        ki_v = 1.0   # Integral gain
-        kd_v = 1   # Derivative gain
-        
-        # PID gains for angular velocity
-        kp_omega = 2.0   # Proportional gain
-        ki_omega = 1.0   # Integral gain
-        kd_omega = 0.6   # Derivative gain
-        
-        # Calculate linear velocity using PID
-        v = (kp_v * dist_to_target + 
-             ki_v * self.dist_error_sum + 
-             kd_v * dist_error_deriv)
-        
-        # Calculate angular velocity using PID
-        omega = (kp_omega * angle_error + 
-                 ki_omega * self.angle_error_sum + 
-                 kd_omega * angle_error_deriv)
-        
-        # Apply limits
-        v = max(0.2, min(v, 5.0))  # Clamp between 0.2 and 5.0
-        omega = np.clip(omega, -np.pi, np.pi)  # Limit angular velocity
-        
-        return v, omega
-
 
 class PIDController:
     def __init__(self):
@@ -401,52 +339,6 @@ class MPCController:
         
         return best_v, best_omega
 
-# ADDITIONAL CONTROLLERS
-
-class PDCosntroller:
-    """Proportional-Derivative controller for trajectory tracking."""
-    def __init__(self):
-        self.prev_angle_error = 0.0
-        self.prev_distance_error = 0.0
-        
-    def control(self, robot_state, target_point, dt):
-        x, y, theta = robot_state
-        x_target, y_target = target_point
-        
-        # Calculate the distance to target
-        dist_to_target = np.sqrt((x_target - x)**2 + (y_target - y)**2)
-        
-        # calculating the distance error rate
-        dist_error_der = (dist_to_target - self.prev_distance_error) / dt
-        self.prev_distance_error = dist_to_target
-        # Calculate the angle to the target
-        angle_to_target = np.arctan2(y_target - y, x_target - x)
-        
-        # Calculate the angle error (normalized between -pi and pi)
-        angle_error = np.arctan2(np.sin(angle_to_target - theta), np.cos(angle_to_target - theta))
-        
-        # Calculate error derivative for the angle
-        angle_error_deriv = (angle_error - self.prev_angle_error) / dt
-        
-        # Store current error for next iteration
-        self.prev_angle_error = angle_error
-        
-        # PD gains
-        kp_v = 2    # Proportional gain for velocity
-        kd_v = 1
-        kp_omega = 2.0  # Proportional gain for angular velocity
-        kd_omega = 1.0  # Derivative gain for angular velocity
-        
-        # Calculate linear velocity - proportional to distance
-        v = kp_v * dist_to_target + kd_v * dist_error_der
-        v = max(0.2, min(v, 5.0))  # Clamp between 0.2 and 5.0
-        
-        # Calculate angular velocity - PD control on the heading error
-        omega = kp_omega * angle_error + kd_omega * angle_error_deriv
-        omega = np.clip(omega, -np.pi, np.pi)  # Limit angular velocity
-        
-        return v, omega
-    
 
 class PDController:
     """PD controller that tracks heading using omega, and maintains desired speed."""
