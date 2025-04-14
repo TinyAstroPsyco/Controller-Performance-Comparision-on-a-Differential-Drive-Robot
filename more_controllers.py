@@ -193,7 +193,7 @@ class TrajectoryGenerator:
         return trajectory
 
 # Controllers from the original file
-class PIDController:
+class PIDController_old:
     def __init__(self):
         self.prev_dist_error = 0.0
         self.prev_angle_error = 0.0
@@ -253,6 +253,67 @@ class PIDController:
         omega = np.clip(omega, -np.pi, np.pi)  # Limit angular velocity
         
         return v, omega
+
+
+class PIDController:
+    def __init__(self):
+        self.prev_angle_error = 0.0
+        self.angle_error_sum = 0.0
+        
+        self.prev_v_error = 0.0
+        self.v_error_sum = 0.0
+        self.prev_distance = 0.0  # For estimating velocity
+
+    def control(self, robot_state, target_point, dt):
+        x, y, theta = robot_state
+        x_target, y_target = target_point
+
+        # Desired linear velocity
+        v_desired = 5.0
+
+        # --- Angular control (trajectory tracking) ---
+        angle_to_target = np.arctan2(y_target - y, x_target - x)
+        angle_error = np.arctan2(np.sin(angle_to_target - theta), np.cos(angle_to_target - theta))
+        angle_error_deriv = (angle_error - self.prev_angle_error) / dt
+        self.angle_error_sum += angle_error * dt
+        self.angle_error_sum = np.clip(self.angle_error_sum, -1.0, 1.0)  # Anti-windup
+        self.prev_angle_error = angle_error
+
+        # PID for omega
+        kp_omega = 2.0
+        ki_omega = 1.0
+        kd_omega = 0.6
+        omega = (kp_omega * angle_error +
+                 ki_omega * self.angle_error_sum +
+                 kd_omega * angle_error_deriv)
+        omega = np.clip(omega, -np.pi, np.pi)
+
+        # --- Linear velocity tracking ---
+        dist_to_target = np.sqrt((x_target - x)**2 + (y_target - y)**2)
+        v_current = (self.prev_distance - dist_to_target) / dt
+        self.prev_distance = dist_to_target
+
+        v_error = v_desired - v_current
+        v_error_deriv = (v_error - self.prev_v_error) / dt
+        self.v_error_sum += v_error * dt
+        self.v_error_sum = np.clip(self.v_error_sum, -2.0, 2.0)  # Anti-windup
+        self.prev_v_error = v_error
+
+        # PID for velocity
+        kp_v = 1.0
+        ki_v = 0.5
+        kd_v = 0.2
+        v = kp_v * v_error + ki_v * self.v_error_sum + kd_v * v_error_deriv
+
+        # Optional: reduce speed when heading is off
+        v *= np.cos(angle_error)
+
+        # Clamp velocity
+        v = np.clip(v, 0.2, 5.0)
+
+        return v, omega
+
+
 
 class MPCController:
     def __init__(self):
@@ -342,7 +403,7 @@ class MPCController:
 
 # ADDITIONAL CONTROLLERS
 
-class PDController:
+class PDCosntroller:
     """Proportional-Derivative controller for trajectory tracking."""
     def __init__(self):
         self.prev_angle_error = 0.0
@@ -385,6 +446,57 @@ class PDController:
         omega = np.clip(omega, -np.pi, np.pi)  # Limit angular velocity
         
         return v, omega
+    
+
+class PDController:
+    """PD controller that tracks heading using omega, and maintains desired speed."""
+    def __init__(self):
+        self.prev_angle_error = 0.0
+        self.prev_v_error = 0.0  # For speed tracking derivative
+        self.prev_distance_error = 0.0
+
+    def control(self, robot_state, target_point, dt):
+        x, y, theta = robot_state
+        x_target, y_target = target_point
+
+        # Desired speed
+        v_desired = 5.0
+
+        # --- Angular control (trajectory tracking) ---
+        angle_to_target = np.arctan2(y_target - y, x_target - x)
+        angle_error = np.arctan2(np.sin(angle_to_target - theta), np.cos(angle_to_target - theta))
+        angle_error_deriv = (angle_error - self.prev_angle_error) / dt
+        self.prev_angle_error = angle_error
+
+        # Angular velocity using PD on heading
+        kp_omega = 2.0
+        kd_omega = 1.0
+        omega = kp_omega * angle_error + kd_omega * angle_error_deriv
+        omega = np.clip(omega, -np.pi, np.pi)
+
+        # --- Linear velocity control (speed tracking) ---
+        # Approximate current velocity as distance change over time
+        dist_to_target = np.sqrt((x_target - x)**2 + (y_target - y)**2)
+        v_current = (self.prev_distance_error - dist_to_target) / dt
+        self.prev_distance_error = dist_to_target
+
+        # Velocity error and derivative
+        v_error = v_desired - v_current
+        v_error_deriv = (v_error - self.prev_v_error) / dt
+        self.prev_v_error = v_error
+
+        # PD gains for velocity tracking
+        kp_v = 1.0
+        kd_v = 0.2
+
+        v = kp_v * v_error +kd_v * v_error_deriv
+        print(f'V bevore clipping  >> {v}')
+        # Optional: slow down if heading error is large
+        v *= np.cos(angle_error)
+        v = np.clip(v, 0.2, 5.0)
+        print(f'V after clipping >> {v}')
+        return v, omega
+
 
 class LQRController:
     """Linear Quadratic Regulator controller for trajectory tracking."""
